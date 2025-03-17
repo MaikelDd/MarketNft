@@ -12,10 +12,17 @@ contract MarketNft is ERC721 {
     mapping(uint256 => string) private s_tokenIdToUri;
     mapping(uint256 => uint256) public s_fractionalSupply;
     mapping(uint256 => mapping(address => uint256)) public s_fractionalBalance;
-    mapping(uint256 => bool) private s_tokenIdExists;
 
     event FractionPriceUpdated(uint256 newPrice);
     event Withdraw(address indexed owner, uint256 amount);
+
+    error PropertyNFT__PropertyDoesNotExist();
+    error PropertyNFT__NotOwner();
+    error PropertyNFT__InsufficientPayment();
+    error PropertyNFT__InsufficientSupply();
+    error PropertyNFT__InsufficientBalance();
+    error PropertyNFT__TransferFailed();
+    error PropertyNFT__NotEnoughBalance();
 
     constructor(uint256 price) ERC721("Example", "EX") {
         s_tokenCounter = 0;
@@ -24,12 +31,17 @@ contract MarketNft is ERC721 {
     }
 
     modifier onlyOwner() {
-        require(msg.sender == i_owner, "Not the owner");
+        if (msg.sender != i_owner) {
+            revert PropertyNFT__NotOwner();
+        }
         _;
     }
 
-    function tokenExists(uint256 tokenId) public view returns (bool) {
-        return s_tokenIdExists[tokenId];
+    modifier exists(uint256 tokenId) {
+        if (s_fractionalSupply[tokenId] == 0) {
+            revert PropertyNFT__PropertyDoesNotExist();
+        }
+        _;
     }
 
     function mintNft(
@@ -41,41 +53,46 @@ contract MarketNft is ERC721 {
         _safeMint(msg.sender, newTokenId);
 
         s_fractionalSupply[newTokenId] = fractions;
-        s_fractionalBalance[newTokenId][address(this)] = fractions;
+        s_fractionalBalance[newTokenId][i_owner] = fractions;
 
         s_tokenCounter++;
     }
 
-    function buyFraction(uint256 tokenId, uint256 amount) public payable {
-        require(msg.value >= s_fractionPrice, "Insufficient payment");
-        require(
-            s_fractionalBalance[tokenId][i_owner] >= amount,
-            "Insufficient supply"
-        );
-        require(tokenExists(tokenId), "Token does not exist");
+    function buyFraction(
+        uint256 tokenId,
+        uint256 amount
+    ) public payable exists(tokenId) {
+        if (msg.value < s_fractionPrice * amount) {
+            revert PropertyNFT__InsufficientPayment();
+        }
+        if (s_fractionalBalance[tokenId][i_owner] < amount) {
+            revert PropertyNFT__InsufficientSupply();
+        }
 
         s_fractionalBalance[tokenId][i_owner] -= amount;
         s_fractionalBalance[tokenId][msg.sender] += amount;
     }
 
-    function sellFraction(uint256 tokenId, uint256 amount) public payable {
-        require(
-            s_fractionalBalance[tokenId][msg.sender] >= amount,
-            "Insufficient balance"
-        );
-        require(tokenExists(tokenId), "Token does not exist");
+    function sellFraction(
+        uint256 tokenId,
+        uint256 amount
+    ) public payable exists(tokenId) {
+        if (s_fractionalBalance[tokenId][msg.sender] < amount) {
+            revert PropertyNFT__InsufficientBalance();
+        }
 
-        require(
-            address(this).balance >= s_fractionPrice * amount,
-            "Insufficient balance"
-        );
+        if (address(this).balance < s_fractionPrice * amount) {
+            revert PropertyNFT__InsufficientBalance();
+        }
 
         s_fractionalBalance[tokenId][msg.sender] -= amount;
         s_fractionalBalance[tokenId][i_owner] += amount;
 
         uint256 payment = s_fractionPrice * amount;
         (bool success, ) = payable(msg.sender).call{value: payment}("");
-        require(success, "Transfer failed");
+        if (!success) {
+            revert PropertyNFT__TransferFailed();
+        }
     }
 
     function setNewFractionPrice(uint256 newPrice) public onlyOwner {
@@ -86,7 +103,9 @@ contract MarketNft is ERC721 {
     function withdraw() public onlyOwner {
         uint256 balance = address(this).balance;
         (bool success, ) = payable(msg.sender).call{value: balance}("");
-        require(success, "Transfer failed");
+        if (!success) {
+            revert PropertyNFT__TransferFailed();
+        }
         emit Withdraw(msg.sender, balance);
     }
 
