@@ -19,7 +19,7 @@ contract MintMarketNft is Script {
 
     function mintNftOnContract(address contractAddress) public {
         vm.startBroadcast();
-        MarketNft(payable(contractAddress)).mintNft{value: 0.1 ether}(Mansion);
+        MarketNft(payable(contractAddress)).mintNft(Mansion, 100);
         vm.stopBroadcast();
     }
 }

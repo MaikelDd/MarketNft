@@ -2,26 +2,92 @@
 pragma solidity ^0.8.19;
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 contract MarketNft is ERC721 {
     uint256 private s_tokenCounter;
-    uint256 private i_maxSupply = 100;
-    uint256 private i_price = 0.1 ether;
+    uint256 private s_fractionPrice = 0.01 ether;
+    address private immutable i_owner;
 
     mapping(uint256 => string) private s_tokenIdToUri;
+    mapping(uint256 => uint256) public s_fractionalSupply;
+    mapping(uint256 => mapping(address => uint256)) public s_fractionalBalance;
+    mapping(uint256 => bool) private s_tokenIdExists;
 
-    constructor(uint256 maxSupply, uint256 price) ERC721("Example", "EX") {
+    event FractionPriceUpdated(uint256 newPrice);
+    event Withdraw(address indexed owner, uint256 amount);
+
+    constructor(uint256 price) ERC721("Example", "EX") {
         s_tokenCounter = 0;
-        i_maxSupply = maxSupply;
-        i_price = price;
+        s_fractionPrice = price;
+        i_owner = msg.sender;
     }
 
-    function mintNft(string memory tokenUri) public payable {
-        require(msg.value >= i_price, "Insufficient payment");
-        require(s_tokenCounter < i_maxSupply, "Max supply reached");
-        s_tokenIdToUri[s_tokenCounter] = tokenUri;
-        _safeMint(msg.sender, s_tokenCounter);
+    modifier onlyOwner() {
+        require(msg.sender == i_owner, "Not the owner");
+        _;
+    }
+
+    function tokenExists(uint256 tokenId) public view returns (bool) {
+        return s_tokenIdExists[tokenId];
+    }
+
+    function mintNft(
+        string memory tokenUri,
+        uint256 fractions
+    ) public onlyOwner {
+        uint256 newTokenId = s_tokenCounter;
+        s_tokenIdToUri[newTokenId] = tokenUri;
+        _safeMint(msg.sender, newTokenId);
+
+        s_fractionalSupply[newTokenId] = fractions;
+        s_fractionalBalance[newTokenId][address(this)] = fractions;
+
         s_tokenCounter++;
+    }
+
+    function buyFraction(uint256 tokenId, uint256 amount) public payable {
+        require(msg.value >= s_fractionPrice, "Insufficient payment");
+        require(
+            s_fractionalBalance[tokenId][i_owner] >= amount,
+            "Insufficient supply"
+        );
+        require(tokenExists(tokenId), "Token does not exist");
+
+        s_fractionalBalance[tokenId][i_owner] -= amount;
+        s_fractionalBalance[tokenId][msg.sender] += amount;
+    }
+
+    function sellFraction(uint256 tokenId, uint256 amount) public payable {
+        require(
+            s_fractionalBalance[tokenId][msg.sender] >= amount,
+            "Insufficient balance"
+        );
+        require(tokenExists(tokenId), "Token does not exist");
+
+        require(
+            address(this).balance >= s_fractionPrice * amount,
+            "Insufficient balance"
+        );
+
+        s_fractionalBalance[tokenId][msg.sender] -= amount;
+        s_fractionalBalance[tokenId][i_owner] += amount;
+
+        uint256 payment = s_fractionPrice * amount;
+        (bool success, ) = payable(msg.sender).call{value: payment}("");
+        require(success, "Transfer failed");
+    }
+
+    function setNewFractionPrice(uint256 newPrice) public onlyOwner {
+        s_fractionPrice = newPrice;
+        emit FractionPriceUpdated(newPrice);
+    }
+
+    function withdraw() public onlyOwner {
+        uint256 balance = address(this).balance;
+        (bool success, ) = payable(msg.sender).call{value: balance}("");
+        require(success, "Transfer failed");
+        emit Withdraw(msg.sender, balance);
     }
 
     function tokenURI(
@@ -30,46 +96,8 @@ contract MarketNft is ERC721 {
         return s_tokenIdToUri[tokenId];
     }
 
-    function getTotalSupply() public view returns (uint256) {
-        return i_maxSupply;
-    }
-
-    function getRemainingSupply() public view returns (uint256) {
-        return i_maxSupply - s_tokenCounter;
-    }
-
     function getPrice() public view returns (uint256) {
-        return i_price;
-    }
-
-    function withdraw() public {
-        uint256 balance = address(this).balance;
-        (bool success, ) = msg.sender.call{value: balance}("");
-        require(success, "Transfer failed");
-    }
-
-    //transfer(address to, uint256 value): Transfers a specified amount of tokens from the sender to the to address (could be a smart contract).
-    function transfer(address to, uint256 value) public {
-        require(balanceOf(msg.sender) >= value, "Insufficient balance");
-        require(to.code.length == 0, "Cannot send to a contract");
-        safeTransferFrom(msg.sender, to, value);
-    }
-
-    //approve(address spender, uint256 tokenId): Allows a spender (e.g., the smart contract) to withdraw tokens from your address up to the approved value.
-    function approve(address spender, uint256 tokenId) public override {
-        require(spender.code.length == 0, "Cannot approve a contract");
-        super.approve(spender, tokenId);
-    }
-
-    //transferFrom(address from, address to, uint256 value): Allows a spender (previously approved) to transfer tokens from one address to another.
-    function transferFrom(
-        address from,
-        address to,
-        uint256 value
-    ) public override {
-        require(balanceOf(from) >= value, "Insufficient balance");
-        require(to.code.length == 0, "Cannot send to a contract");
-        super.transferFrom(from, to, value);
+        return s_fractionPrice;
     }
 
     // fallback
