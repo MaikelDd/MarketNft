@@ -21,11 +21,12 @@ contract MarketNftTest is Test {
     uint256 constant Price = 0.01 ether;
     uint256 constant NewPrice = 0.02 ether;
 
-    error PropertyNFT__NotOwner();
-    error PropertyNFT__InsufficientPayment();
-    error PropertyNFT__InsufficientSupply();
-    error PropertyNFT__InsufficientBalance();
-    error PropertyNFT__NonExistentNft();
+    error MarketNFT__NotOwner();
+    error MarketNFT__InsufficientPayment();
+    error MarketNFT__InsufficientSupply();
+    error MarketNFT__InsufficientBalance();
+    error MarketNFT__NonExistentNft();
+    error MarketNFT__TransferFailed();
 
     function setUp() public {
         vm.prank(OWNER);
@@ -45,7 +46,7 @@ contract MarketNftTest is Test {
 
     function testMintAsNotOwner() public {
         vm.prank(NOT_OWNER);
-        vm.expectRevert(PropertyNFT__NotOwner.selector);
+        vm.expectRevert(MarketNFT__NotOwner.selector);
         marketNft.mintNft(Mansion, testFractions);
     }
 
@@ -54,7 +55,7 @@ contract MarketNftTest is Test {
         marketNft.mintNft(Mansion, 100);
 
         vm.prank(NOT_OWNER);
-        vm.expectRevert(PropertyNFT__InsufficientPayment.selector);
+        vm.expectRevert(MarketNFT__InsufficientPayment.selector);
         marketNft.buyFraction(0, 10);
     }
 
@@ -64,7 +65,7 @@ contract MarketNftTest is Test {
 
         vm.deal(NOT_OWNER, 1 ether);
         vm.prank(NOT_OWNER);
-        vm.expectRevert(PropertyNFT__InsufficientPayment.selector);
+        vm.expectRevert(MarketNFT__InsufficientPayment.selector);
         marketNft.buyFraction{value: 0.05 ether}(0, 10);
     }
 
@@ -72,9 +73,14 @@ contract MarketNftTest is Test {
         vm.prank(OWNER);
         marketNft.mintNft(Mansion, 100);
 
+        uint256 pricePerFraction = marketNft.getPrice();
+        uint256 totalCost = pricePerFraction * 101;
+
+        vm.deal(NOT_OWNER, totalCost);
+
         vm.prank(NOT_OWNER);
-        vm.expectRevert(PropertyNFT__InsufficientPayment.selector);
-        marketNft.buyFraction(0, 101);
+        vm.expectRevert(MarketNft.MarketNFT__InsufficientSupply.selector);
+        marketNft.buyFraction{value: totalCost}(0, 101);
     }
 
     function testBuyFractionUpdatesBalances() public {
@@ -87,7 +93,7 @@ contract MarketNftTest is Test {
         marketNft.buyFraction{value: 0.1 ether}(0, 10);
 
         assertEq(marketNft.s_fractionalBalance(0, NOT_OWNER), 10);
-        assertEq(marketNft.s_fractionalBalance(0, OWNER), 90);
+        assertEq(marketNft.s_fractionalBalance(0, address(marketNft)), 90);
         assertEq(address(marketNft).balance, 0.1 ether);
     }
 
@@ -104,7 +110,7 @@ contract MarketNftTest is Test {
         vm.prank(NOT_OWNER);
         marketNft.sellFraction(0, 10);
         assertEq(marketNft.s_fractionalBalance(0, NOT_OWNER), 10);
-        assertEq(marketNft.s_fractionalBalance(0, OWNER), 90);
+        assertEq(marketNft.s_fractionalBalance(0, address(marketNft)), 90);
     }
 
     function testWithdraw() public {
@@ -130,9 +136,9 @@ contract MarketNftTest is Test {
         assertEq(marketNft.s_fractionalSupply(1), 50);
         assertEq(marketNft.s_fractionalSupply(2), 200);
 
-        assertEq(marketNft.s_fractionalBalance(0, OWNER), 100);
-        assertEq(marketNft.s_fractionalBalance(1, OWNER), 50);
-        assertEq(marketNft.s_fractionalBalance(2, OWNER), 200);
+        assertEq(marketNft.s_fractionalBalance(0, address(marketNft)), 100);
+        assertEq(marketNft.s_fractionalBalance(1, address(marketNft)), 50);
+        assertEq(marketNft.s_fractionalBalance(2, address(marketNft)), 200);
     }
 
     function testFallbackAndReceive() public {
@@ -149,13 +155,13 @@ contract MarketNftTest is Test {
     function testCantBuyFromNonExistentProperty() public {
         vm.deal(NOT_OWNER, 1 ether);
         vm.prank(NOT_OWNER);
-        vm.expectRevert(MarketNft.PropertyNFT__PropertyDoesNotExist.selector);
+        vm.expectRevert(MarketNft.MarketNFT__PropertyDoesNotExist.selector);
         marketNft.buyFraction{value: 0.1 ether}(999, 10);
     }
 
     function testCantSellToNonExistentProperty() public {
         vm.prank(NOT_OWNER);
-        vm.expectRevert(MarketNft.PropertyNFT__PropertyDoesNotExist.selector);
+        vm.expectRevert(MarketNft.MarketNFT__PropertyDoesNotExist.selector);
         marketNft.sellFraction(999, 10);
     }
 
@@ -170,7 +176,7 @@ contract MarketNftTest is Test {
         vm.deal(address(marketNft), 1 ether);
 
         vm.prank(NOT_OWNER);
-        vm.expectRevert(MarketNft.PropertyNFT__NotOwner.selector);
+        vm.expectRevert(MarketNFT__NotOwner.selector);
         marketNft.withdraw();
     }
 
@@ -182,13 +188,12 @@ contract MarketNftTest is Test {
 
         assertEq(marketNft.getPrice(), NewPrice);
 
-        // Buy with new price
         vm.prank(OWNER);
         marketNft.mintNft(Mansion, 100);
 
         vm.deal(NOT_OWNER, 1 ether);
         vm.prank(NOT_OWNER);
-        marketNft.buyFraction{value: 0.2 ether}(0, 10); // Now needs 0.2 ETH for 10 fractions
+        marketNft.buyFraction{value: 0.2 ether}(0, 10);
 
         assertEq(marketNft.s_fractionalBalance(0, NOT_OWNER), 10);
     }
