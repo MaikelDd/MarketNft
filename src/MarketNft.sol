@@ -156,12 +156,10 @@ contract MarketNft is ERC721 {
         string memory tokenName = bytes(metadata.name).length > 0
             ? metadata.name
             : name();
-
-        // Build the final JSON
         return
             string(
                 abi.encodePacked(
-                    _baseURI(),
+                    "data:application/json;base64,",
                     Base64.encode(
                         bytes(
                             abi.encodePacked(
